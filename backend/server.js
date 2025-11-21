@@ -1,10 +1,14 @@
 const express = require("express");
 const cors = require("cors");
 const path = require("path");
+const http = require("http");
+const { Server } = require("socket.io");
 const { Pool } = require("pg");
 
 const app = express();
 const PORT = process.env.PORT || 3000;
+const server = http.createServer(app);
+const io = new Server(server, { cors: { origin: "*" } });
 
 app.use(cors());
 app.use(express.json());
@@ -59,6 +63,8 @@ app.post("/anotaciones", async (req, res) => {
         "')) ON CONFLICT (id) DO NOTHING",
       [id, autor, texto, posJson, rotJson, view_type]
     );
+    // Emitir evento de creación a clientes conectados
+    try { io.emit('annotation:create', { id, autor, texto, posicion, rotacion, view_type }); } catch(e) {}
     res.status(201).json({ ok: true });
   } catch (err) {
     console.error(err);
@@ -66,8 +72,24 @@ app.post("/anotaciones", async (req, res) => {
   }
 });
 
-app.listen(PORT, () => {
-  console.log(`API escuchando en http://localhost:${PORT}`);
+// --- Socket.IO: sincronización de avatares simples ---
+// Eventos: 'avatar:join', 'avatar:update', 'avatar:leave'
+io.on("connection", (socket) => {
+  const id = socket.id;
+  socket.broadcast.emit("avatar:join", { id });
+
+  socket.on("avatar:update", (payload) => {
+    // payload: { id, pos:[x,y,z], rot:[x,y,z], name }
+    socket.broadcast.emit("avatar:update", { ...payload, id });
+  });
+
+  socket.on("disconnect", () => {
+    io.emit("avatar:leave", { id });
+  });
+});
+
+server.listen(PORT, () => {
+  console.log(`API+Sockets en http://localhost:${PORT}`);
 });
 
 // DELETE /anotaciones  -> borra todas o por view_type (?view_type=bars|terrain|points|surface)
@@ -80,11 +102,13 @@ app.delete("/anotaciones", async (req, res) => {
         "DELETE FROM anotaciones WHERE view_type = $1",
         [view_type]
       );
-      return res.json({ deleted: rowCount, filteredBy: { view_type } });
+      try { io.emit('annotation:clear', { view_type }); } catch(e) {}
+      return res.json({ ok: true, deleted: rowCount });
+    } else {
+      const { rowCount } = await pool.query("DELETE FROM anotaciones");
+      try { io.emit('annotation:clear', { view_type: null }); } catch(e) {}
+      return res.json({ ok: true, deleted: rowCount });
     }
-
-    const { rowCount } = await pool.query("DELETE FROM anotaciones");
-    return res.json({ deleted: rowCount });
   } catch (err) {
     console.error(err);
     res.status(500).json({ error: "Error al borrar anotaciones" });

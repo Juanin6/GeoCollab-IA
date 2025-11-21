@@ -17,6 +17,9 @@
   <script src="points-3d.js"></script>
   <script src="terrain-wire.js"></script>
   <script src="viz-panel.js"></script>
+  <!-- Multiusuario (avatares): Socket.IO client + componente -->
+  <script src="/socket.io/socket.io.js"></script>
+  <script src="avatars-sync.js"></script>
 </head>
 <body>
   <a-scene anotacion-persistencia>
@@ -72,10 +75,13 @@
   position="-3 0 -7">
 </a-entity>
 
-    <a-entity viz-panel="chart: #chart; position: 10 2 -7"></a-entity>
+    <a-entity viz-panel="chart: #chart; position: 30 100 -7"></a-entity>
 
     <!-- Superficie base por si quieres “anclar” anotaciones también -->
     <a-plane rotation="-90 0 0" width="20" height="20" color="#7BC8A4" class="collidable"></a-plane>
+
+    <!-- Avatares multiusuario: transmite tu pose y muestra otros usuarios -->
+    <a-entity avatars-sync="updateHz: 12; color: #7dd3fc; height: 1.7; radius: 0.18"></a-entity>
   </a-scene>
 
   <button id="guardar-btn"

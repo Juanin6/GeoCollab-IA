@@ -1,7 +1,9 @@
 AFRAME.registerComponent('viz-panel', {
   schema: {
     chart: {type: 'selector'},
-    position: {type: 'string', default: '-1 1 -7'}
+    position: {type: 'string', default: '-1 1 -7'},
+    offsetY: {type: 'number', default: 1.8},
+    offsetX: {type: 'number', default: 0.9}
   },
   init: function () {
     const chartEl = this.data.chart || document.querySelector('#chart');
@@ -9,8 +11,31 @@ AFRAME.registerComponent('viz-panel', {
     const panel = document.createElement('a-entity');
     panel.setAttribute('id', 'vizPanel');
     panel.setAttribute('class', 'ui-panel no-annotate');
-    panel.setAttribute('position', this.data.position);
-    panel.setAttribute('rotation', '0 -90 0'); // gira 30° sobre Y
+    // El panel se coloca al lado del chart, pero NO se ancla como hijo del chart (para no borrarlo al cambiar modo)
+    const placePanel = () => {
+      try {
+        // Valores por defecto razonables
+        let cols = 7, cellSize = 0.9, gap = 0.15;
+        // Intenta leer atributos del modo actual si existen
+        const attrs = chartEl.getAttribute('barchart-3d') || chartEl.getAttribute('terrain-3d') || chartEl.getAttribute('points-3d') || chartEl.getAttribute('terrain-wire');
+        if (attrs && typeof attrs === 'string') {
+          const m = (k)=>{ const r = attrs.match(new RegExp(k+"\s*:\s*([^;]+)")); return r?parseFloat(r[1]):undefined; };
+          cols = m('cols') || cols;
+          cellSize = m('cellSize') || m('size') || cellSize;
+          gap = m('gap') || gap;
+        }
+        const width = cols * (cellSize + gap);
+        // Posición relativa al chart actual
+        const cpos = chartEl.object3D.position;
+        const y = (this.data && typeof this.data.offsetY === 'number') ? this.data.offsetY : 1.8;
+        const ox = (this.data && typeof this.data.offsetX === 'number') ? this.data.offsetX : 0.9;
+        panel.setAttribute('position', `${cpos.x + (width/2)+ox} ${y} ${cpos.z}`);
+        panel.setAttribute('rotation', '0 0 0');
+      } catch (e) {
+        panel.setAttribute('position', '1.2 1.8 0');
+        panel.setAttribute('rotation', '0 0 0');
+      }
+    };
 
     const bg = document.createElement('a-entity');
     bg.setAttribute('class', 'ui-panel no-annotate');
@@ -19,7 +44,7 @@ AFRAME.registerComponent('viz-panel', {
     panel.appendChild(bg);
 
     const title = document.createElement('a-text');
-    title.setAttribute('value', 'Visualizacion');
+    title.setAttribute('value', 'Filtros');
     title.setAttribute('color', '#cde3ff');
     title.setAttribute('width', '2');
     title.setAttribute('align', 'center');
@@ -84,6 +109,12 @@ AFRAME.registerComponent('viz-panel', {
       }
     };
 
+    // Estado visual de selección
+    let state = { slot: null, zone: null, type: null, yThreshold: null };
+    const setActiveStyle = (el, active) => {
+      el.setAttribute('material', active ? 'color:#2f3c5a; opacity:1.0' : 'color:#1a2238; opacity:0.95');
+    };
+
     const setMode = (mode) => {
       while (chartEl.firstChild) chartEl.removeChild(chartEl.firstChild);
       chartEl.removeObject3D && chartEl.removeObject3D('mesh');
@@ -102,6 +133,8 @@ AFRAME.registerComponent('viz-panel', {
       }
       chartEl.setAttribute('data-view-type', mode);
       chartEl.emit('view-change', { viewType: mode }, false);
+      // Reubica el panel tras cambiar modo
+      placePanel();
       // Reset de filtros para evitar estados anteriores que oculten todo
       // Lo hacemos en el siguiente tick para que el nuevo componente ya esté montado y escuche el evento
       const reset = {};
@@ -123,6 +156,14 @@ AFRAME.registerComponent('viz-panel', {
     panel.appendChild(btnTerrainWire);
     panel.appendChild(btnPoints);
 
+    const slotLbl = document.createElement('a-text');
+    slotLbl.setAttribute('value', 'Franja');
+    slotLbl.setAttribute('color', '#9fb7d7');
+    slotLbl.setAttribute('width', '1.6');
+    slotLbl.setAttribute('align', 'center');
+    slotLbl.setAttribute('position', '0 -0.30 0.01');
+    panel.appendChild(slotLbl);
+
     // Selector de franja horaria (7 slots)
     const slotRow = document.createElement('a-entity');
     slotRow.setAttribute('position', '0 -0.42 0');
@@ -130,7 +171,7 @@ AFRAME.registerComponent('viz-panel', {
       const sbtn = document.createElement('a-entity');
       sbtn.setAttribute('class', 'viz-option');
       sbtn.setAttribute('geometry', 'primitive: plane; width: 0.12; height: 0.12');
-      sbtn.setAttribute('material', 'color: #243047; opacity: 0.98');
+      sbtn.setAttribute('material', 'color: #1a2238; opacity: 0.95');
       sbtn.setAttribute('position', `${(idx-3)*0.14} 0 0.01`);
       const t = document.createElement('a-text');
       t.setAttribute('value', String(idx+1));
@@ -139,11 +180,15 @@ AFRAME.registerComponent('viz-panel', {
       t.setAttribute('width', '1');
       t.setAttribute('position', '0 0 0.01');
       sbtn.appendChild(t);
-      sbtn.addEventListener('mouseenter', () => sbtn.setAttribute('material','color:#2f3c5a; opacity:1.0'));
-      sbtn.addEventListener('mouseleave', () => sbtn.setAttribute('material','color:#243047; opacity:0.98'));
+      sbtn.addEventListener('mouseenter', () => setActiveStyle(sbtn, true));
+      sbtn.addEventListener('mouseleave', () => setActiveStyle(sbtn, state.slot===idx));
       sbtn.addEventListener('click', ()=>{
+        // Toggle selección
+        state.slot = (state.slot===idx) ? null : idx;
+        // Estilos
+        Array.from(slotRow.children).forEach((ch, i)=> setActiveStyle(ch, state.slot===i));
         // Emite filtro a la escena y al chart
-        const detail = { slot: idx };
+        const detail = (state.slot===null) ? {} : { slot: state.slot };
         panel.emit('filters-change', detail, false);
         panel.sceneEl && panel.sceneEl.emit('filters-change', detail, false);
         chartEl && chartEl.emit('filters-change', detail, false);
@@ -153,6 +198,14 @@ AFRAME.registerComponent('viz-panel', {
     for (let i=0;i<7;i++) slotRow.appendChild(makeSlot(i));
     panel.appendChild(slotRow);
 
+    const zoneLbl = document.createElement('a-text');
+    zoneLbl.setAttribute('value', 'Zona');
+    zoneLbl.setAttribute('color', '#9fb7d7');
+    zoneLbl.setAttribute('width', '1.6');
+    zoneLbl.setAttribute('align', 'center');
+    zoneLbl.setAttribute('position', '0 -0.50 0.01');
+    panel.appendChild(zoneLbl);
+
     // Selector de zona (filas)
     const zoneRow = document.createElement('a-entity');
     zoneRow.setAttribute('position', '0 -0.58 0');
@@ -160,7 +213,7 @@ AFRAME.registerComponent('viz-panel', {
       const zbtn = document.createElement('a-entity');
       zbtn.setAttribute('class', 'viz-option');
       zbtn.setAttribute('geometry', 'primitive: plane; width: 0.16; height: 0.12');
-      zbtn.setAttribute('material', 'color: #243047; opacity: 0.98');
+      zbtn.setAttribute('material', 'color: #1a2238; opacity: 0.95');
       zbtn.setAttribute('position', `${(idx-2)*0.18} 0 0.01`);
       const t = document.createElement('a-text');
       t.setAttribute('value', `Z${idx+1}`);
@@ -169,10 +222,12 @@ AFRAME.registerComponent('viz-panel', {
       t.setAttribute('width', '1');
       t.setAttribute('position', '0 0 0.01');
       zbtn.appendChild(t);
-      zbtn.addEventListener('mouseenter', () => zbtn.setAttribute('material','color:#2f3c5a; opacity:1.0'));
-      zbtn.addEventListener('mouseleave', () => zbtn.setAttribute('material','color:#243047; opacity:0.98'));
+      zbtn.addEventListener('mouseenter', () => setActiveStyle(zbtn, true));
+      zbtn.addEventListener('mouseleave', () => setActiveStyle(zbtn, state.zone===idx));
       zbtn.addEventListener('click', ()=>{
-        const detail = { zone: idx };
+        state.zone = (state.zone===idx) ? null : idx;
+        Array.from(zoneRow.children).forEach((ch, i)=> setActiveStyle(ch, state.zone===i));
+        const detail = (state.zone===null) ? {} : { zone: state.zone };
         panel.emit('filters-change', detail, false);
         panel.sceneEl && panel.sceneEl.emit('filters-change', detail, false);
         chartEl && chartEl.emit('filters-change', detail, false);
@@ -181,6 +236,14 @@ AFRAME.registerComponent('viz-panel', {
     };
     for (let i=0;i<5;i++) zoneRow.appendChild(makeZone(i));
     panel.appendChild(zoneRow);
+
+    const typeLbl = document.createElement('a-text');
+    typeLbl.setAttribute('value', 'Tipo');
+    typeLbl.setAttribute('color', '#9fb7d7');
+    typeLbl.setAttribute('width', '1.6');
+    typeLbl.setAttribute('align', 'center');
+    typeLbl.setAttribute('position', '0 -0.66 0.01');
+    panel.appendChild(typeLbl);
 
     // Selector de Tipo (Entrega / Incidente)
     const typeRow = document.createElement('a-entity');
@@ -198,10 +261,22 @@ AFRAME.registerComponent('viz-panel', {
       txt.setAttribute('width', '1.6');
       txt.setAttribute('position', '0 0 0.01');
       btn.appendChild(txt);
-      btn.addEventListener('mouseenter', () => btn.setAttribute('material','color:#243047; opacity:0.98'));
-      btn.addEventListener('mouseleave', () => btn.setAttribute('material','color:#1a2238; opacity:0.95'));
+      btn.addEventListener('mouseenter', () => setActiveStyle(btn, true));
+      btn.addEventListener('mouseleave', () => setActiveStyle(btn, state.type===val));
       btn.addEventListener('click', ()=>{
-        const detail = { type: val };
+        state.type = (state.type===val) ? null : val;
+        Array.from(typeRow.children).forEach((ch)=>{
+          const v = ch.querySelector('a-text')?.getAttribute('value');
+          const is = (v===label && state.type===val) || (v!==label && false);
+          // se re-evalúa abajo al final tras alternar todos
+        });
+        // Actualiza estilo por valor
+        Array.from(typeRow.children).forEach((ch)=>{
+          const v = ch.querySelector('a-text')?.getAttribute('value');
+          const active = (v==='Entrega' && state.type==='delivery') || (v==='Incidente' && state.type==='incident');
+          setActiveStyle(ch, active);
+        });
+        const detail = (state.type===null) ? {} : { type: state.type };
         panel.emit('filters-change', detail, false);
         panel.sceneEl && panel.sceneEl.emit('filters-change', detail, false);
         chartEl && chartEl.emit('filters-change', detail, false);
@@ -211,6 +286,14 @@ AFRAME.registerComponent('viz-panel', {
     typeRow.appendChild(makeType('Entrega','delivery', -0.25));
     typeRow.appendChild(makeType('Incidente','incident', 0.25));
     panel.appendChild(typeRow);
+
+    const thrLbl = document.createElement('a-text');
+    thrLbl.setAttribute('value', 'Umbral Y');
+    thrLbl.setAttribute('color', '#9fb7d7');
+    thrLbl.setAttribute('width', '1.6');
+    thrLbl.setAttribute('align', 'center');
+    thrLbl.setAttribute('position', '0 -0.82 0.01');
+    panel.appendChild(thrLbl);
 
     // Umbral de Y (0/15/30 min)
     const thrRow = document.createElement('a-entity');
@@ -228,10 +311,16 @@ AFRAME.registerComponent('viz-panel', {
       txt.setAttribute('width', '1.2');
       txt.setAttribute('position', '0 0 0.01');
       btn.appendChild(txt);
-      btn.addEventListener('mouseenter', () => btn.setAttribute('material','color:#243047; opacity:0.98'));
-      btn.addEventListener('mouseleave', () => btn.setAttribute('material','color:#1a2238; opacity:0.95'));
+      btn.addEventListener('mouseenter', () => setActiveStyle(btn, true));
+      btn.addEventListener('mouseleave', () => setActiveStyle(btn, state.yThreshold===minutes));
       btn.addEventListener('click', ()=>{
-        const detail = { yThreshold: minutes };
+        state.yThreshold = (state.yThreshold===minutes) ? null : minutes;
+        Array.from(thrRow.children).forEach((ch)=>{
+          const v = ch.querySelector('a-text')?.getAttribute('value');
+          const active = (v==='≥ 0 min' && state.yThreshold===0) || (v==='≥ 15 min' && state.yThreshold===15) || (v==='≥ 30 min' && state.yThreshold===30);
+          setActiveStyle(ch, active);
+        });
+        const detail = (state.yThreshold===null) ? {} : { yThreshold: state.yThreshold };
         panel.emit('filters-change', detail, false);
         panel.sceneEl && panel.sceneEl.emit('filters-change', detail, false);
         chartEl && chartEl.emit('filters-change', detail, false);
@@ -243,7 +332,9 @@ AFRAME.registerComponent('viz-panel', {
     thrRow.appendChild(makeThr('≥ 30 min', 30, 0.4));
     panel.appendChild(thrRow);
 
+    // Se ancla el panel al contenedor del componente (no al chart) para que no desaparezca al limpiar hijos del chart
     this.el.appendChild(panel);
+    placePanel();
 
     let initial = 'bars';
     if (chartEl.hasAttribute('terrain-3d')) initial = 'terrain';

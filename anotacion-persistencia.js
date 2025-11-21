@@ -44,6 +44,27 @@ AFRAME.registerComponent("anotacion-persistencia", {
       }
       this.loadAnotaciones();
 
+      // Suscripción en tiempo real a anotaciones via Socket.IO (una vez al cargar)
+      try {
+        const ioClient = window.io ? window.io : null;
+        if (ioClient) {
+          this.socket = ioClient();
+          this.socket.on('annotation:create', (a) => {
+            const vt = this.currentViewType || 'bars';
+            const av = (a && (a.view_type || 'bars'));
+            if (av !== vt) return;
+            const exists = sceneEl.querySelector(`[data-anot-id="${a.id}"]`);
+            if (!exists) this._appendAnnotation(a);
+          });
+          this.socket.on('annotation:clear', ({view_type}) => {
+            const vt = this.currentViewType || 'bars';
+            if (view_type === null || view_type === vt) {
+              sceneEl.querySelectorAll('.persisted-anotacion').forEach((el)=>el.remove());
+            }
+          });
+        }
+      } catch(e) {}
+
       if (!cameraEl || !cameraEl.components.raycaster) {
         console.warn("No se encontró cámara con raycaster.");
         return;
@@ -395,6 +416,14 @@ AFRAME.registerComponent("anotacion-persistencia", {
         // Tomamos la intersección más cercana
         const first = e.detail.intersections && e.detail.intersections[0];
         const targetEl = first && first.object && first.object.el ? first.object.el : null;
+        // Control de labels de anotación: mostrar solo la intersectada
+        const anns = sceneEl.querySelectorAll('.persisted-anotacion');
+        anns.forEach((ann)=>{
+          const lbl = ann.querySelector('a-text');
+          if (!lbl) return;
+          const active = targetEl && ann === targetEl;
+          lbl.setAttribute('visible', !!active);
+        });
         if (targetEl && (isKeyboardEl(targetEl) || isNoAnnotateEl(targetEl) || !hasCollidableEl(targetEl))) {
           this.lastHitPoint = null;
           return;
@@ -405,6 +434,9 @@ AFRAME.registerComponent("anotacion-persistencia", {
       // Si se deja de apuntar a algo, limpiamos
       cameraEl.addEventListener("raycaster-intersection-cleared", () => {
         this.lastHitPoint = null;
+        // Oculta todas las etiquetas cuando no se apunta a nada
+        const anns = sceneEl.querySelectorAll('.persisted-anotacion a-text');
+        anns.forEach((t)=> t.setAttribute('visible', false));
       });
 
       // Botón: guarda usando el último punto de impacto conocido
@@ -428,10 +460,6 @@ AFRAME.registerComponent("anotacion-persistencia", {
           return;
         }
         if (!targetEl || !hasCollidableEl(targetEl)) return;
-        if (!this.notePreset) {
-          console.log('Selecciona un preset de texto en el panel antes de anotar.');
-          return;
-        }
 
         const chartElNow = sceneEl.querySelector("#chart");
         if (
@@ -466,6 +494,22 @@ AFRAME.registerComponent("anotacion-persistencia", {
           if (ds.value !== undefined) parts.push(`valor: ${ds.value}`);
           if (parts.length) contexto2 = ` [${parts.join(" | ")}]`;
         }
+        // Si NO estamos en VR, crear anotación inmediata con texto genérico
+        if (!sceneEl.is('vr-mode')) {
+          const label = 'Nota';
+          const newAnotacion = {
+            id: Date.now(),
+            autor: autorFinal,
+            texto: `${label}${contexto2}`,
+            posicion: [point.x, point.y, point.z],
+            rotacion: [0, 0, 0],
+            view_type: vtNow,
+          };
+          this.saveAnotacion(newAnotacion);
+          return;
+        }
+
+        // En VR, usar el picker de presets
         showPresetPicker(point, (label)=>{
           const newAnotacion = {
             id: Date.now(),
@@ -479,6 +523,39 @@ AFRAME.registerComponent("anotacion-persistencia", {
         });
       });
     });
+  },
+
+  _appendAnnotation: function(anotacion){
+    const sceneEl = this.el;
+    const markerEl = document.createElement("a-entity");
+    const pos = Array.isArray(anotacion.posicion)
+      ? anotacion.posicion
+      : (anotacion.posicion && anotacion.posicion.coordinates) || anotacion.posicion || [0, 0, 0];
+    const rot = Array.isArray(anotacion.rotacion)
+      ? anotacion.rotacion
+      : anotacion.rotacion || [0, 0, 0];
+    markerEl.setAttribute("position", pos.join(" "));
+    markerEl.setAttribute("rotation", rot.join(" "));
+    markerEl.setAttribute("class", "persisted-anotacion collidable");
+    markerEl.setAttribute('data-anot-id', String(anotacion.id));
+    markerEl.setAttribute("geometry", "primitive: sphere; radius: 0.1");
+    markerEl.setAttribute("material", "color: #00FF00");
+    const safeTexto = `${anotacion.autor}: ${anotacion.texto}`.replace(/[\n\r]/g, " ");
+    const label = document.createElement('a-text');
+    label.setAttribute('value', safeTexto);
+    label.setAttribute('position', '0 0.3 0');
+    label.setAttribute('width', '2');
+    label.setAttribute('color', '#FFFFFF');
+    label.setAttribute('wrap-count', '20');
+    label.setAttribute('visible', 'false');
+    markerEl.appendChild(label);
+    const show = () => label.setAttribute('visible', true);
+    const hide = () => label.setAttribute('visible', false);
+    markerEl.addEventListener('mouseenter', show);
+    markerEl.addEventListener('mouseleave', hide);
+    markerEl.addEventListener('raycaster-intersected', show);
+    markerEl.addEventListener('raycaster-intersected-cleared', hide);
+    sceneEl.appendChild(markerEl);
   },
 
   saveAnotacion: async function (anotacion) {
@@ -510,44 +587,7 @@ AFRAME.registerComponent("anotacion-persistencia", {
       const anotaciones = await res.json();
 
       anotaciones.forEach((anotacion) => {
-        const markerEl = document.createElement("a-entity");
-
-        const pos = Array.isArray(anotacion.posicion)
-          ? anotacion.posicion
-          : (anotacion.posicion && anotacion.posicion.coordinates) ||
-            anotacion.posicion || [0, 0, 0];
-        const rot = Array.isArray(anotacion.rotacion)
-          ? anotacion.rotacion
-          : anotacion.rotacion || [0, 0, 0];
-
-        markerEl.setAttribute("position", pos.join(" "));
-        markerEl.setAttribute("rotation", rot.join(" "));
-        markerEl.setAttribute("class", "persisted-anotacion collidable");
-
-        markerEl.setAttribute("geometry", "primitive: sphere; radius: 0.1");
-        markerEl.setAttribute("material", "color: #00FF00");
-
-        const safeTexto = `${anotacion.autor}: ${anotacion.texto}`.replace(
-          /[\n\r]/g,
-          " "
-        );
-        const label = document.createElement('a-text');
-        label.setAttribute('value', safeTexto);
-        label.setAttribute('position', '0 0.3 0');
-        label.setAttribute('width', '2');
-        label.setAttribute('color', '#FFFFFF');
-        label.setAttribute('wrap-count', '20');
-        label.setAttribute('visible', 'false');
-        markerEl.appendChild(label);
-
-        const show = () => label.setAttribute('visible', true);
-        const hide = () => label.setAttribute('visible', false);
-        markerEl.addEventListener('mouseenter', show);
-        markerEl.addEventListener('mouseleave', hide);
-        markerEl.addEventListener('raycaster-intersected', show);
-        markerEl.addEventListener('raycaster-intersected-cleared', hide);
-
-        sceneEl.appendChild(markerEl);
+        this._appendAnnotation(anotacion);
       });
 
       console.log(`Cargadas ${anotaciones.length} anotaciones persistentes.`);
