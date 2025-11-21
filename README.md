@@ -44,37 +44,6 @@ ngrok http 3000
 ```
 Copia la URL pública HTTPS que te da ngrok y ábrela en otro dispositivo. Esa URL tunela hacia tu `http://localhost:3000`.
 
-## Características y uso
-- Panel de filtros junto a la gráfica, con etiquetas “Filtros / Franja / Zona / Tipo / Umbral Y”.
-  - Puntos 3D: soporta `slot`, `zone`, `type`, `yThreshold`.
-  - Barras 3D: soporta `slot` y `zone`.
-- Anotaciones:
-  - En VR: se abre un picker de presets para el texto.
-  - En desktop (no VR): al pulsar “Guardar Anotación Aquí” crea una nota genérica “Nota …”.
-  - Se sincronizan en tiempo real entre usuarios (sin refrescar) por Socket.IO.
-- Avatares multiusuario:
-  - Cápsula/Esfera por defecto.
-  - Puedes cargar un modelo humanoide GLB: en `index.html` ajusta el componente `avatars-sync`:
-    ```html
-    <a-entity avatars-sync="
-      updateHz: 12;
-      modelUrl: url(assets/humanoid.glb);
-      modelScale: 1 1 1;
-      modelYOffset: 0.0
-    "></a-entity>
-    ```
-  - Coloca tu archivo en `assets/humanoid.glb`.
-
-## Controles
-- Desktop:
-  - Apuntar con mouse: añade este cursor (si no existe) dentro de `<a-scene>`:
-    ```html
-    <a-entity cursor="rayOrigin: mouse"
-              raycaster="objects: .collidable, .viz-option, .ui-panel; far: 30; recursive: true"></a-entity>
-    ```
-  - Botón “Guardar Anotación Aquí” crea la anotación donde estás apuntando.
-- VR:
-  - Usa el láser de la mano para seleccionar filtros y crear anotaciones (se abrirá el picker de presets).
 
 ## Solución de problemas
 - No veo la UI / filtros no reaccionan:
